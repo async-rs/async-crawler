@@ -1,86 +1,93 @@
-extern crate hyper;
-extern crate html5ever;
-extern crate tendril;
+#![feature(async_await)]
 
-use std::sync::{Arc, Mutex};
-use std::thread;
-use std::sync::mpsc;
+use html5ever::tokenizer::{Token, TagToken, TokenSink, Tokenizer, TokenizerOpts, TokenSinkResult, BufferQueue, TagKind};
+use html5ever::tokenizer::Tag;
 
-use std::io::Read;
-use hyper::client::Client;
+use std::borrow::Borrow;
 
-use tendril::*;
-use tendril::fmt::{UTF8};
-
-use html5ever::tokenizer::{TokenSink, Token, TokenizerOpts, ParseError};
-use html5ever::tokenizer::{TagToken, StartTag, Tag};
-use html5ever::driver::{tokenize_to, one_input};
-
-struct LinkFinder{
+use surf;
+use async_std::task;
+#[derive(Default, Debug)]
+struct LinkFinder {
     links: Vec<String>
 }
 
-impl TokenSink for LinkFinder {
-    fn process_token(&mut self, token: Token) {
+impl TokenSink for &mut LinkFinder {
+    type Handle = ();
+
+    fn process_token(&mut self, token: Token, _line_number: u64) -> TokenSinkResult<Self::Handle> {
         match token {
-            TagToken(tag @ Tag{kind: StartTag, ..}) => {
-                if tag.name.as_slice() == "a" {
-                    for attr in tag.attrs {
-                        if attr.name.local.as_slice() == "href" {
-                            self.links.push(String::from(attr.value));
+            TagToken(ref tag @ Tag{kind: TagKind::StartTag, ..}) => {
+                if tag.name.as_ref() == "a" {
+                    for attr in tag.attrs.iter() {
+                        if attr.name.local.as_ref() == "href" {
+                            let attr_str: &[u8] = attr.value.borrow();
+                            self.links.push(String::from_utf8_lossy(attr_str).into_owned());
                         }
                     }
                 }
-            }
-            _ => ()
+            },
+            _ => {  }
         }
+        TokenSinkResult::Continue
     }
 }
 
-fn main() {
-    let client = Client::new();
+fn parse_page(page: String) -> Vec<String> {
+    let mut link_finder = LinkFinder::default();
+    let mut tokenizer = Tokenizer::new(&mut link_finder, TokenizerOpts::default());
+    let mut queue = BufferQueue::new();
+    queue.push_back(page.into());
+    tokenizer.feed(&mut queue);
+    link_finder.links
+}
 
-    let res = client.get("http://rust-lang.org").send();
+type CrawlResult =  Result<(), Box<dyn std::error::Error + Send + Sync + 'static>>;
+type BoxFuture = std::pin::Pin<Box<dyn std::future::Future<Output = CrawlResult> + Send>>;
 
-    let mut response = match res {
-        Ok(x) => x,
-        Err(err) => panic!("{:?}", err)
-    };
+fn box_crawl(pages: Vec<String>, current: u8, max_depth: u8) -> BoxFuture {
+    Box::pin(crawl(pages, current, max_depth))
+}
 
-    let mut body = String::new();
+async fn crawl(pages: Vec<String>, current: u8, max_depth: u8) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
+    println!("Current: {}, Max: {}", current, max_depth);
+    if current > max_depth {
+        println!("Reached max depth");
+        return Ok(());
+    }
 
-    response.read_to_string(&mut body);
+    let mut tasks = vec![];
 
-    let mut sink = LinkFinder{links: vec![]};
+    println!("crawling: {:?}", pages);
 
-    sink = tokenize_to(sink, one_input(Tendril::from(body)), Default::default());
-
-    let l = sink.links;
-
-    let data = Arc::new(Mutex::new(l));
-
-    let mut handlers = vec![];
-
-    for i in 0..5 {
-        let data = data.clone();
-        handlers.push(thread::spawn(move || {
-            loop {
-                let link = {
-                    data.lock().unwrap().pop()
-                };
-                println!("Starting to download this at thread {}", i);
-                // TODO actually download
-                thread::sleep_ms(2000);
-                match link {
-                    Some(d) => println!("Finished downloading {} at thread {}", d, i),
-                    None => break
-                }
+    for mut page in pages {
+        if !page.starts_with("http") {
+            if page.starts_with("/") {
+                page = format!("https://rust-lang.org{}", page);
+            } else {
+                page = format!("https://rust-lang.org/{}", page);
             }
-        }));
+        }
+
+        let task = task::spawn(async move {
+            println!("getting: {}", page);
+            let mut res = surf::get(page).await?;
+            let body = res.body_string().await?;
+            let links = parse_page(body);
+            println!("following: {:?}", links);
+            box_crawl(links, current + 1, max_depth).await
+        });
+        tasks.push(task);
     }
 
-    for handler in handlers {
-        handler.join();
+    for task in tasks.into_iter() {
+        task.await?
     }
+    Ok(())
+}
 
+fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
+    task::block_on(async {
+        crawl(vec!["https://www.rust-lang.org/".into()], 1, 2).await
+    })
 }

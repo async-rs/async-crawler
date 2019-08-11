@@ -1,9 +1,10 @@
 [package]
 name = "rust-crawler"
 version = "0.1.0"
-authors = ["Johann <git@johann-hofmann.com>"]
+authors = ["Florian Gilcher <florian.gilcher@ferrous-systems.com>", "Johann <git@johann-hofmann.com>"]
+edition = "2018"
 
 [dependencies]
-hyper = "0.6.13"
-html5ever = "0.2.4"
-tendril = "0.1.5"
+async-std = { path = "../async-std" }
+surf = { path = "../surf" }
+html5ever = "0.24.0"
