@@ -1,5 +1,5 @@
 [package]
-name = "rust-crawler"
+name = "async-crawler"
 version = "0.1.0"
 authors = ["Florian Gilcher <florian.gilcher@ferrous-systems.com>", "Johann <git@johann-hofmann.com>"]
 edition = "2018"
