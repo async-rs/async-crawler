@@ -1,6 +1,6 @@
 # Website crawler using async-std and surf
 
-An simple crawler that crawls websites step by step.
+An simple crawler that crawls websites step by step. It is a learning example, so it uses a naive crawling strategy, feel free to optimize!
 
 ## Credits
 
