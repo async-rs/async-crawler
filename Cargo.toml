@@ -8,3 +8,4 @@ edition = "2018"
 async-std = { path = "../async-std" }
 surf = { path = "../surf" }
 html5ever = "0.24.0"
+url = "1"
